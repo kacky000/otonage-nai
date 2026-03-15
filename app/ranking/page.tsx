@@ -1,17 +1,20 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { CATEGORIES, COLORS, type SessionData, type User, type Rating, type RankingEntry } from '@/lib/types';
 
+const MIN_RATINGS = 5;
+
 export default function RankingPage() {
   const router = useRouter();
   const [session, setSession] = useState<SessionData | null>(null);
-  const [ranking, setRanking] = useState<RankingEntry[]>([]);
+  const [entries, setEntries] = useState<RankingEntry[]>([]);
   const [ratedUserIds, setRatedUserIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [selectedTab, setSelectedTab] = useState<string>('overall');
 
   useEffect(() => {
     const stored = localStorage.getItem('otonage_session');
@@ -33,15 +36,13 @@ export default function RankingPage() {
     const users: User[] = usersRes.data || [];
     const allRatings: Rating[] = ratingsRes.data || [];
 
-    // Track which users the current user has rated
     const rated = new Set<string>();
     allRatings
       .filter((r) => r.rater_id === s.userId)
       .forEach((r) => rated.add(r.target_id));
     setRatedUserIds(rated);
 
-    // Build ranking
-    const entries: RankingEntry[] = users.map((user) => {
+    const built: RankingEntry[] = users.map((user) => {
       const targetRatings = allRatings.filter((r) => r.target_id === user.id);
       if (targetRatings.length === 0) {
         return { username: user.username, userId: user.id, avg: null, total: 0, count: 0 };
@@ -63,12 +64,30 @@ export default function RankingPage() {
       };
     });
 
-    const sorted = entries
-      .filter((e) => e.count > 0)
-      .sort((a, b) => b.total - a.total);
-
-    setRanking(sorted);
+    setEntries(built);
     setLoading(false);
+  };
+
+  const ranking = useMemo(() => {
+    const qualified = entries.filter((e) => e.count >= MIN_RATINGS);
+
+    if (selectedTab === 'overall') {
+      return qualified.sort((a, b) => b.total - a.total);
+    }
+
+    const cat = CATEGORIES.find((c) => c.key === selectedTab);
+    if (!cat) return qualified;
+
+    return [...qualified].sort((a, b) => {
+      const aVal = a.avg?.[cat.key] ?? 0;
+      const bVal = b.avg?.[cat.key] ?? 0;
+      return bVal - aVal;
+    });
+  }, [entries, selectedTab]);
+
+  const getDisplayScore = (entry: RankingEntry): number => {
+    if (selectedTab === 'overall') return entry.total;
+    return entry.avg?.[selectedTab] ?? 0;
   };
 
   const canViewChart = (entry: RankingEntry) => {
@@ -77,6 +96,11 @@ export default function RankingPage() {
   };
 
   const medals = ['👑', '🥈', '🥉'];
+
+  const tabs = [
+    { key: 'overall', label: '総合', emoji: '🏆' },
+    ...CATEGORIES.map((c) => ({ key: c.key, label: c.label, emoji: c.emoji })),
+  ];
 
   if (loading) {
     return (
@@ -99,11 +123,38 @@ export default function RankingPage() {
         ← 戻る
       </button>
 
-      <div className="text-center my-4 mb-6">
+      <div className="text-center my-4 mb-4">
         <div className="text-4xl">🏆</div>
         <h2 className="text-[22px] font-extrabold mt-2 mb-0" style={{ color: COLORS.text }}>
           大人げないランキング
         </h2>
+        <div className="text-xs mt-1" style={{ color: COLORS.textDim }}>
+          {MIN_RATINGS}人以上に評価されたメンバーのみ表示
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div
+        className="flex gap-1.5 overflow-x-auto pb-3 mb-4 -mx-4 px-4"
+        style={{ scrollbarWidth: 'none' }}
+      >
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setSelectedTab(tab.key)}
+            className="shrink-0 py-2 px-3 rounded-xl text-xs font-bold cursor-pointer border-none transition-all"
+            style={{
+              background: selectedTab === tab.key
+                ? `linear-gradient(135deg, ${COLORS.accent}, #ff6b6b)`
+                : COLORS.card,
+              color: selectedTab === tab.key ? '#fff' : COLORS.textDim,
+              border: selectedTab === tab.key ? 'none' : `1px solid ${COLORS.border}`,
+              boxShadow: selectedTab === tab.key ? `0 2px 12px ${COLORS.accentGlow}` : 'none',
+            }}
+          >
+            {tab.emoji} {tab.label}
+          </button>
+        ))}
       </div>
 
       {ranking.length === 0 ? (
@@ -115,11 +166,14 @@ export default function RankingPage() {
             color: COLORS.textDim,
           }}
         >
-          まだ評価がありません
+          {entries.some((e) => e.count > 0)
+            ? `${MIN_RATINGS}人以上に評価されたメンバーがまだいません`
+            : 'まだ評価がありません'}
         </div>
       ) : (
         ranking.map((entry, i) => {
           const viewable = canViewChart(entry);
+          const score = getDisplayScore(entry);
           const content = (
             <div
               className="rounded-2xl p-5 mb-3 flex items-center gap-3.5 transition-all"
@@ -144,7 +198,7 @@ export default function RankingPage() {
                 className="font-black text-2xl font-mono"
                 style={{ color: i === 0 ? COLORS.gold : COLORS.accent }}
               >
-                {entry.total.toFixed(1)}
+                {score.toFixed(1)}
               </div>
             </div>
           );

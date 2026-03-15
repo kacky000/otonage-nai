@@ -70,7 +70,13 @@ export default function HomePage() {
     );
   }
 
-  const otherUsers = users.filter((u) => u.id !== session.userId);
+  const otherUsers = users
+    .filter((u) => u.id !== session.userId)
+    .sort((a, b) => {
+      const countA = ratings.filter((r) => r.target_id === a.id).length;
+      const countB = ratings.filter((r) => r.target_id === b.id).length;
+      return countA - countB;
+    });
   const myAvg = getAverageRatings(session.userId);
 
   return (
